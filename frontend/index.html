@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Repo Security Analyzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="navbar">
+    <div class="logo">Repo Security Analyzer</div>
+    <button class="nav-btn" onclick="openModal()">Login / Register</button>
+</nav>
+
+
+<section class="hero" id="heroSection">
+    <h1>Analyze GitHub Repository Security</h1>
+    <p>Get instant security score and project insights.</p>
+
+    <div class="input-hero locked">
+        <input type="text" placeholder="🔒 Paste Github repo URL" disabled>
+        <button disabled>Analyze</button>
+    </div>
+</section>
+
+<div id="analyzeSection" class="analyze-card" style="display:none;">
+    <div class="top-bar">
+        <h2>Analyze Repository</h2>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+    </div>
+
+    <div class="input-box">
+        <input type="text" id="repoUrl" placeholder="Paste Github repo url">
+        <button onclick="analyzeRepo()">Analyze</button>
+    </div>
+
+    <div id="result"></div>
+</div>
+
+<div class="modal" id="authModal">
+    <div class="modal-card">
+
+        <div class="modal-tabs">
+            <button onclick="showLogin()">Login</button>
+            <button onclick="showRegister()">Register</button>
+            <span class="close" onclick="closeModal()">×</span>
+        </div>
+
+        <div id="loginBox">
+            <input type="email" id="login_email" placeholder="Email">
+            <input type="password" id="login_password" placeholder="Password">
+            <button onclick="login()">Login</button>
+        </div>
+
+        <div id="registerBox" style="display:none;">
+            <input type="text" id="reg_username" placeholder="Username">
+            <input type="email" id="reg_email" placeholder="Email">
+            <input type="password" id="reg_password" placeholder="Password">
+            <button type= "button" onclick="register()">Register</button>
+        </div>
+
+    </div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
