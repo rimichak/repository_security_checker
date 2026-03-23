@@ -4,20 +4,26 @@ from pydantic import BaseModel, Field
 from fastapi.security import OAuth2PasswordBearer
 import requests
 import re
-from typing import Optional
+from typing import Optional, List
 from pymongo import MongoClient
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
+
+
 load_dotenv()
-SECRET_KEY= os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
 
 client = MongoClient("mongodb://localhost:27017/")
 db = client["repo_analyzer_db"]
-collections = db["repositories"]
+repos_collection = db["repositories"]
 users_collection = db["users"]
+
 
 app = FastAPI()
 
@@ -29,153 +35,213 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-algorithm = "HS256"
-Access_token_expire_minutes = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 
-class repourl(BaseModel):
-    github_url: str = Field(..., example= "https://github.com/rimichak/Insurance-policy-red-flag-ditector")
+def hash_password(password: str):
+    return pwd_context.hash(password)
 
-class response_data(BaseModel):
-    name: str
-    owner: str
-    description: Optional[str]
-    stars: int
-    forks: int
-    language: Optional[str]
-    created_at: str
-    updated_at: str
-    score: int
-    insights: str
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        user = users_collection.find_one({"email": email})
+        if user is None:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        return user
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+
+class RepoURL(BaseModel):
+    github_url: str = Field(..., example="https://github.com/user/repo")
+
 
 class UserRegister(BaseModel):
     username: str
     email: str
     password: str
+
+
 class UserLogin(BaseModel):
     email: str
     password: str
 
-def hash_password(password: str):
-    return pwd_context.hash(password)
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=Access_token_expire_minutes)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=algorithm)
-
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[algorithm])
-        email= payload.get("sub")
-
-        if email is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        user = users_collection.find_one({"email": email})
-        if user is None:
-            raise HTTPException(status_code=401, detail="user not find")
-        return user
-    
-    except JWTError:
-        raise HTTPException(status_code=401, detail="invalid token")
+class SecurityResponse(BaseModel):
+    name: str
+    owner: str
+    score: int
+    risk_level: str
+    issues: List[str]
+    suggestions: List[str]
 
 
 def extract_owner(url: str):
     pattern = r"https://github\.com/([^/]+)/([^/]+?)(?:\.git|/)?$"
-
     match = re.match(pattern, url)
 
     if not match:
         return None, None
+
     return match.group(1), match.group(2)
 
-def analyze_data(data):
-    score = 0
-    insights = []
 
-    if data["stargazers_count"] > 100:
-        score += 3
-        insights.append("Popular repo")
-    elif data["stargazers_count"] > 10:
-        score += 1
-        insights.append("Decent Popularity")
+def get_repo_files(owner, repo):
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents"
+    response = requests.get(url, timeout=5)
 
-    if data["forks_count"] > 10:
-        score += 2
-        insights.append("Good community Engagement")
+    if response.status_code != 200:
+        return []
 
-    if data["license"]:
-        score += 2
-        insights.append("License present")
+    return response.json()
 
-    return score, ",".join(insights)
+
+def scan_for_secrets(files):
+    patterns = {
+        "AWS Key": r"AKIA[0-9A-Z]{16}",
+        "Google API Key": r"AIza[0-9A-Za-z-_]{35}",
+        "Password": r"password\s*=\s*['\"].+['\"]",
+        "JWT Token": r"eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+",
+    }
+
+    findings = []
+
+    for file in files:
+        if file["type"] == "file" and file.get("download_url"):
+            try:
+                content = requests.get(file["download_url"], timeout=5).text
+
+                for name, pattern in patterns.items():
+                    if re.search(pattern, content):
+                        findings.append(f"{name} found in {file['name']}")
+
+            except:
+                continue
+
+    return findings
+
+
+def analyze_security(findings):
+    score = 100
+
+    for _ in findings:
+        score -= 20
+
+    score = max(score, 0)
+
+    if score >= 80:
+        level = "Low Risk"
+    elif score >= 50:
+        level = "Medium Risk"
+    else:
+        level = "High Risk"
+
+    return score, level
+
+
+def generate_suggestions(findings):
+    suggestions = []
+
+    for f in findings:
+        if "AWS Key" in f:
+            suggestions.append("Move AWS keys to environment variables (.env)")
+        elif "Google API Key" in f:
+            suggestions.append("Restrict API key usage and move to secure storage")
+        elif "Password" in f:
+            suggestions.append("Use hashed passwords (bcrypt) instead of plain text")
+        elif "JWT" in f:
+            suggestions.append("Store JWT securely and avoid hardcoding")
+
+    return list(set(suggestions))
+
+
 
 @app.post("/register")
 def register(user: UserRegister):
-    print("PASSWORD RECEIVED:", user.password)
-    print("PASSWORD LENGTH:", len(user.password))
     if users_collection.find_one({"email": user.email}):
         raise HTTPException(status_code=400, detail="Email already exists")
-    
+
     users_collection.insert_one({
         "username": user.username,
         "email": user.email,
         "password": hash_password(user.password)
     })
+
     return {"message": "User registered successfully"}
+
 
 @app.post("/login")
 def login(user: UserLogin):
     db_user = users_collection.find_one({"email": user.email})
+
     if not db_user or not verify_password(user.password, db_user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     token = create_access_token({"sub": db_user["email"]})
+
     return {"access_token": token, "token_type": "bearer"}
-    
 
 
-@app.post("/repo-metadata", response_model = response_data)
-def get_repo_metadata(payload: repourl, current_user=Depends(get_current_user)):
+@app.post("/scan-repo", response_model=SecurityResponse)
+def scan_repo(payload: RepoURL, current_user=Depends(get_current_user)):
     owner, repo = extract_owner(payload.github_url)
 
     if not owner or not repo:
-        raise HTTPException(status_code= 400, detail="invalid github repository")
-    api_url = f"https://api.github.com/repos/{owner}/{repo}"
-    response = requests.get(api_url)
+        raise HTTPException(status_code=400, detail="Invalid GitHub URL")
 
+    
+    api_url = f"https://api.github.com/repos/{owner}/{repo}"
+    response = requests.get(api_url, timeout=5)
 
     if response.status_code != 200:
         raise HTTPException(status_code=404, detail="Repository not found")
 
     data = response.json()
-    score, insights = analyze_data(data)
-    result = response_data(
+
+    
+    files = get_repo_files(owner, repo)
+    findings = scan_for_secrets(files)
+
+    
+    score, risk_level = analyze_security(findings)
+    suggestions = generate_suggestions(findings)
+
+    result = SecurityResponse(
         name=data["name"],
         owner=owner,
-        description=data["description"],
-        stars=data["stargazers_count"],
-        forks=data["forks_count"],
-        language=data["language"],
-        created_at=data["created_at"],
-        updated_at=data["updated_at"],
         score=score,
-        insights=insights
+        risk_level=risk_level,
+        issues=findings,
+        suggestions=suggestions
     )
 
-    collections.insert_one({
+    
+    repos_collection.insert_one({
         **result.model_dump(),
-        "user_email": current_user["email"]
-        })
+        "user_email": current_user["email"],
+        "scanned_at": datetime.utcnow()
+    })
 
     return result
-                             
-
-
