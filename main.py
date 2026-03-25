@@ -79,8 +79,8 @@ class RepoURL(BaseModel):
 
 
 class UserRegister(BaseModel):
-    username: EmailStr
-    email: str
+    username: str
+    email: EmailStr
     password: str
 
 
