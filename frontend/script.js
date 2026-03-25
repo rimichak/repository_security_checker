@@ -52,6 +52,7 @@ async function login() {
 
     if (data.access_token) {
         localStorage.setItem("token", data.access_token);
+        document.getElementById("userEmail").innerText = email;
         alert("Login successful 🚀");
         location.reload();
     } else {
