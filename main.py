@@ -80,12 +80,12 @@ class RepoURL(BaseModel):
 
 class UserRegister(BaseModel):
     username: str
-    email: str
+    email: Emailstr
     password: str
 
 
 class UserLogin(BaseModel):
-    email: str
+    email: Emailstr
     password: str
 
 
