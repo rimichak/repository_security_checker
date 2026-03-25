@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from fastapi.security import OAuth2PasswordBearer
 import requests
 import re
@@ -79,13 +79,13 @@ class RepoURL(BaseModel):
 
 
 class UserRegister(BaseModel):
-    username: str
-    email: Emailstr
+    username: EmailStr
+    email: str
     password: str
 
 
 class UserLogin(BaseModel):
-    email: Emailstr
+    email: EmailStr
     password: str
 
 
